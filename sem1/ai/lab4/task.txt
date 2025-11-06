@@ -1,0 +1,1 @@
+Approximate the solution of TSP using ACO algorithm. Use the structures from lab 1. Compare the results with full search, greedy and A* algorithms (time, obtained cost)

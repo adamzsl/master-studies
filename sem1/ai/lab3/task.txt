@@ -1,0 +1,2 @@
+Solve/approximate TSP using A* with inadmissible/admissible heuristics. 
+Use the structures from lab 1. Compare the results with full search and greedy algorithms (time, obtained cost)

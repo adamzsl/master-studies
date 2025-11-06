@@ -1,0 +1,1 @@
+Solve TSP using greedy algorithm with nearest neighbour as criterium and using another greedy algorithm of your choice. Use the structures from lab 1. Compare the results with full search (time, obtained cost)

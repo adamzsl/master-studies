@@ -1,0 +1,17 @@
+Przy pomocy biblioteki scikit-fuzzy zbuduj model rozmyty, który na podstawie danych wejściowych będzie szacował wartość prędkości początkowej ciała w rzucie ukośnym, aby osiągnąć dany zasięg rzutu.
+
+Dane wejściowe:
+
+            - zadany zasięg d
+
+            - kąt rzutu a
+
+            - współczynnik oporu powietrza k
+
+            - masa ciała m
+
+Porównaj działanie modelu z wynikami otrzymanymi ze wzoru.
+
+a, d -> https://www.naukowiec.org/wzory/fizyka/zasieg-rzutu-ukosnego_98.html
+
+a, d, k, m -> http://www.ftj.agh.edu.pl/~pytlik/Info/rzut_z_oporem.pdf
