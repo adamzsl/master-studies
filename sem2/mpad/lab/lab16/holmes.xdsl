@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This network was created in GeNIe Academic, which can be used for academic teaching and research purposes only -->
+<smile version="1.0" id="Network1" numsamples="10000" discsamples="10000">
+	<nodes>
+		<cpt id="Burglary">
+			<state id="State0" />
+			<state id="State1" />
+			<probabilities>0.99995 5e-05</probabilities>
+		</cpt>
+		<cpt id="Earthquake">
+			<state id="State0" />
+			<state id="State1" />
+			<probabilities>0.9918 0.008200000000000001</probabilities>
+		</cpt>
+		<cpt id="Alarm">
+			<state id="State0" />
+			<state id="State1" />
+			<parents>Burglary Earthquake</parents>
+			<probabilities>0.999 0.001 0.8 0.2 0.05 0.95 0.02 0.98</probabilities>
+		</cpt>
+		<cpt id="Radio">
+			<state id="State0" />
+			<state id="State1" />
+			<parents>Earthquake</parents>
+			<probabilities>0.8 0.2 0 1</probabilities>
+		</cpt>
+		<cpt id="Watson">
+			<state id="State0" />
+			<state id="State1" />
+			<parents>Alarm</parents>
+			<probabilities>1 0 0.25 0.75</probabilities>
+		</cpt>
+	</nodes>
+	<extensions>
+		<genie version="1.0" app="GeNIe 5.0.5310.0 ACADEMIC" name="Network1">
+			<node id="Burglary">
+				<name>Burglary</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>154 87 221 125</position>
+			</node>
+			<node id="Earthquake">
+				<name>Earthquake</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>260 88 328 130</position>
+			</node>
+			<node id="Alarm">
+				<name>Alarm</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>217 162 263 190</position>
+			</node>
+			<node id="Radio">
+				<name>Radio</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>332 166 377 194</position>
+			</node>
+			<node id="Watson">
+				<name>Watson</name>
+				<interior color="e5f6f7" />
+				<outline color="000080" />
+				<font color="000000" name="Arial" size="8" />
+				<position>217 242 269 274</position>
+			</node>
+		</genie>
+	</extensions>
+</smile>
