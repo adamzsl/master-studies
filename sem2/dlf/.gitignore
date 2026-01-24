@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyTorch
+*.pth
+*.pt
+checkpoints/
+*.ckpt
+
+# Data
+data/
+dataset/
+*.zip
+*.tar.gz
+*.jpg
+*.jpeg
+*.png
+
+# Training outputs
+training_curves.png
+*.log
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keep structure
+!data/.gitkeep
+!checkpoints/.gitkeep
+
+# Keep vocabulary after training
+!vocab.json
+
+# Submission file is OK to commit
+!submission.zip
