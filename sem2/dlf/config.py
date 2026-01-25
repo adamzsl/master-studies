@@ -10,6 +10,7 @@ HIDDEN_DIM = 256
 DROPOUT = 0.3
 
 # CNN Configuration
+# Jeśli trening jest wolny (szczególnie na CPU), ustaw np. 'resnet18'.
 CNN_BACKBONE = 'resnet50'  # resnet18, resnet34, resnet50
 PRETRAINED = True
 

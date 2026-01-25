@@ -51,13 +51,37 @@ class Trainer:
         self.train_accs = []
         self.val_accs = []
         self.best_val_acc = 0.0
+
+        # AMP (mixed precision) speeds up CUDA training significantly
+        self.use_amp = (str(self.device).startswith('cuda') or getattr(self.device, 'type', '') == 'cuda')
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+
+    @staticmethod
+    def _binary_metrics(preds: torch.Tensor, labels: torch.Tensor):
+        """Compute accuracy/precision/recall/f1 for binary preds/labels on-device."""
+        preds_b = preds.bool()
+        labels_b = labels.bool()
+
+        tp = (preds_b & labels_b).sum()
+        tn = ((~preds_b) & (~labels_b)).sum()
+        fp = (preds_b & (~labels_b)).sum()
+        fn = ((~preds_b) & labels_b).sum()
+
+        total = tp + tn + fp + fn
+        acc = (tp + tn).float() / total.clamp_min(1)
+        prec = tp.float() / (tp + fp).clamp_min(1)
+        rec = tp.float() / (tp + fn).clamp_min(1)
+        f1 = 2 * prec * rec / (prec + rec).clamp_min(1e-12)
+        return acc, prec, rec, f1
         
     def train_epoch(self):
         """Train for one epoch"""
         self.model.train()
-        total_loss = 0.0
-        all_preds = []
-        all_labels = []
+        total_loss = torch.zeros((), device=self.device)
+        tp = torch.zeros((), device=self.device)
+        tn = torch.zeros((), device=self.device)
+        fp = torch.zeros((), device=self.device)
+        fn = torch.zeros((), device=self.device)
         
         pbar = tqdm(self.train_loader, desc='Training')
         for images, texts, labels in pbar:
@@ -66,34 +90,44 @@ class Trainer:
             labels = labels.to(self.device)
             
             # Forward pass
-            self.optimizer.zero_grad()
-            outputs = self.model(images, texts)
-            loss = self.criterion(outputs, labels)
-            
+            self.optimizer.zero_grad(set_to_none=True)
+            with torch.cuda.amp.autocast(enabled=self.use_amp):
+                outputs = self.model(images, texts)
+                loss = self.criterion(outputs, labels)
+
             # Backward pass
-            loss.backward()
-            self.optimizer.step()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             
             # Metrics
-            total_loss += loss.item()
             preds = (outputs > 0.5).float()
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
+            preds_b = preds.bool()
+            labels_b = labels.bool()
+            tp += (preds_b & labels_b).sum()
+            tn += ((~preds_b) & (~labels_b)).sum()
+            fp += (preds_b & (~labels_b)).sum()
+            fn += ((~preds_b) & labels_b).sum()
+
+            total_loss += loss.detach()
             
             # Update progress bar
-            pbar.set_postfix({'loss': loss.item()})
+            pbar.set_postfix({'loss': float(loss.detach().cpu())})
         
-        avg_loss = total_loss / len(self.train_loader)
-        accuracy = accuracy_score(all_labels, all_preds)
+        avg_loss = (total_loss / max(1, len(self.train_loader))).item()
+        total = (tp + tn + fp + fn).clamp_min(1)
+        accuracy = ((tp + tn).float() / total).item()
         
         return avg_loss, accuracy
     
     def validate(self):
         """Validate the model"""
         self.model.eval()
-        total_loss = 0.0
-        all_preds = []
-        all_labels = []
+        total_loss = torch.zeros((), device=self.device)
+        tp = torch.zeros((), device=self.device)
+        tn = torch.zeros((), device=self.device)
+        fp = torch.zeros((), device=self.device)
+        fn = torch.zeros((), device=self.device)
         
         with torch.no_grad():
             for images, texts, labels in tqdm(self.val_loader, desc='Validation'):
@@ -102,20 +136,28 @@ class Trainer:
                 labels = labels.to(self.device)
                 
                 # Forward pass
-                outputs = self.model(images, texts)
-                loss = self.criterion(outputs, labels)
+                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                    outputs = self.model(images, texts)
+                    loss = self.criterion(outputs, labels)
                 
                 # Metrics
-                total_loss += loss.item()
                 preds = (outputs > 0.5).float()
-                all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
+                preds_b = preds.bool()
+                labels_b = labels.bool()
+                tp += (preds_b & labels_b).sum()
+                tn += ((~preds_b) & (~labels_b)).sum()
+                fp += (preds_b & (~labels_b)).sum()
+                fn += ((~preds_b) & labels_b).sum()
+
+                total_loss += loss.detach()
         
-        avg_loss = total_loss / len(self.val_loader)
-        accuracy = accuracy_score(all_labels, all_preds)
-        precision = precision_score(all_labels, all_preds, zero_division=0)
-        recall = recall_score(all_labels, all_preds, zero_division=0)
-        f1 = f1_score(all_labels, all_preds, zero_division=0)
+        avg_loss = (total_loss / max(1, len(self.val_loader))).item()
+        total = (tp + tn + fp + fn).clamp_min(1)
+        accuracy = ((tp + tn).float() / total).item()
+        precision = (tp.float() / (tp + fp).clamp_min(1)).item()
+        recall = (tp.float() / (tp + fn).clamp_min(1)).item()
+        f1 = (2 * (tp.float() / (tp + fp).clamp_min(1)) * (tp.float() / (tp + fn).clamp_min(1))
+              / ((tp.float() / (tp + fp).clamp_min(1)) + (tp.float() / (tp + fn).clamp_min(1))).clamp_min(1e-12)).item()
         
         return avg_loss, accuracy, precision, recall, f1
     
@@ -244,6 +286,13 @@ def main():
     # Set random seeds for reproducibility
     torch.manual_seed(42)
     np.random.seed(42)
+
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        try:
+            torch.set_float32_matmul_precision('high')
+        except Exception:
+            pass
     
     print("="*50)
     print("Cross-Modal Verification Training")
@@ -257,7 +306,7 @@ def main():
         
         # Create dummy data for testing
         os.makedirs(DATA_DIR, exist_ok=True)
-        os.makedirs(os.path.join(DATA_DIR, 'images'), exist_ok=True)
+        os.makedirs(os.path.join(DATA_DIR, 'Images'), exist_ok=True)
         
         # Create dummy captions file
         dummy_captions = {
@@ -272,7 +321,11 @@ def main():
         return
     
     # Create dataloaders
-    image_dir = os.path.join(DATA_DIR, 'images')
+    image_dir = os.path.join(DATA_DIR, 'Images')
+    if not os.path.exists(image_dir):
+        alt_image_dir = os.path.join(DATA_DIR, 'images')
+        if os.path.exists(alt_image_dir):
+            image_dir = alt_image_dir
     captions_file = os.path.join(DATA_DIR, 'captions.json')
     
     if not os.path.exists(captions_file):
@@ -282,6 +335,18 @@ def main():
             if os.path.exists(alt_path):
                 captions_file = alt_path
                 break
+    else:
+        # If captions.json exists but is empty, fall back to captions.txt if available
+        try:
+            with open(captions_file, 'r') as f:
+                maybe_data = json.load(f)
+            if isinstance(maybe_data, dict) and len(maybe_data) == 0:
+                alt_path = os.path.join(DATA_DIR, 'captions.txt')
+                if os.path.exists(alt_path):
+                    print("WARNING: captions.json is empty; using captions.txt instead.")
+                    captions_file = alt_path
+        except Exception:
+            pass
     
     print(f"\nLoading data from {DATA_DIR}...")
     train_loader, val_loader, vocab = create_dataloaders(

@@ -3,6 +3,7 @@ Utility script to prepare Flickr8k dataset for training
 Downloads and formats Flickr8k dataset if needed
 """
 import os
+import csv
 import json
 import zipfile
 import requests
@@ -29,36 +30,91 @@ def download_file(url, destination):
 
 def extract_flickr8k_captions(captions_file, output_file):
     """
-    Extract captions from Flickr8k format
-    Input format: image_id.jpg#0\tcaption
+    Extract captions from Flickr8k caption files.
+
+    Supported input formats:
+    - Flickr8k.token.txt: image_id.jpg#0\tcaption
+    - Kaggle captions.txt: CSV with header "image,caption"
     Output format: JSON with {image_id: [captions]}
     """
     captions_dict = {}
-    
-    with open(captions_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-                
-            parts = line.split('\t')
-            if len(parts) < 2:
-                continue
-            
-            # Parse image id (remove #number suffix)
-            img_caption_id = parts[0]
-            caption = parts[1]
-            
-            # Extract image id (remove #0, #1, etc.)
-            if '#' in img_caption_id:
-                img_id = img_caption_id.split('#')[0]
-            else:
-                img_id = img_caption_id
-            
-            if img_id not in captions_dict:
-                captions_dict[img_id] = []
-            
-            captions_dict[img_id].append(caption)
+
+    with open(captions_file, 'r', encoding='utf-8', newline='') as f:
+        # Detect format (tab-delimited token file vs CSV)
+        first_line = f.readline()
+        if not first_line:
+            return captions_dict
+        f.seek(0)
+
+        is_token_format = ('\t' in first_line)
+        is_csv_format = (',' in first_line and not is_token_format)
+
+        if is_token_format:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                parts = line.split('\t')
+                if len(parts) < 2:
+                    continue
+
+                img_caption_id = parts[0].strip()
+                caption = parts[1].strip()
+
+                # Extract image id (remove #0, #1, etc.)
+                img_id = img_caption_id.split('#')[0] if '#' in img_caption_id else img_caption_id
+                if not img_id:
+                    continue
+
+                captions_dict.setdefault(img_id, []).append(caption)
+
+        elif is_csv_format:
+            reader = csv.reader(f)
+            for row in reader:
+                if not row:
+                    continue
+
+                # Skip header if present
+                if row[0].strip().lower() == 'image':
+                    continue
+
+                if len(row) < 2:
+                    continue
+
+                img_id = row[0].strip()
+                caption = ','.join(row[1:]).strip()
+                if not img_id or not caption:
+                    continue
+
+                captions_dict.setdefault(img_id, []).append(caption)
+
+        else:
+            # Fallback: try tab split first, then comma split
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                if '\t' in line:
+                    parts = line.split('\t', 1)
+                    if len(parts) < 2:
+                        continue
+                    img_caption_id, caption = parts[0].strip(), parts[1].strip()
+                    img_id = img_caption_id.split('#')[0] if '#' in img_caption_id else img_caption_id
+                elif ',' in line:
+                    parts = line.split(',', 1)
+                    if len(parts) < 2:
+                        continue
+                    img_id, caption = parts[0].strip(), parts[1].strip()
+                    if img_id.lower() == 'image':
+                        continue
+                else:
+                    continue
+
+                if not img_id or not caption:
+                    continue
+                captions_dict.setdefault(img_id, []).append(caption)
     
     # Save as JSON
     with open(output_file, 'w') as f:
@@ -76,7 +132,7 @@ def prepare_flickr8k(data_dir='./data'):
     
     Expected structure after preparation:
     data/
-      images/
+            Images/
         image1.jpg
         image2.jpg
         ...
@@ -85,7 +141,7 @@ def prepare_flickr8k(data_dir='./data'):
     print("Preparing Flickr8k dataset...")
     
     os.makedirs(data_dir, exist_ok=True)
-    images_dir = os.path.join(data_dir, 'images')
+    images_dir = os.path.join(data_dir, 'Images')
     os.makedirs(images_dir, exist_ok=True)
     
     # Check if captions file exists
@@ -117,13 +173,20 @@ def prepare_flickr8k(data_dir='./data'):
         with open(output_captions, 'r') as f:
             captions_dict = json.load(f)
     
+    if not captions_dict:
+        print("\nNo captions were extracted.")
+        print("This usually means the captions file format wasn't recognized or the file is empty.")
+        print(f"Checked file: {captions_file}")
+        print("Expected either Flickr8k.token.txt (tab) or captions.txt (CSV with 'image,caption').")
+        return False
+
     # Check if images are in the right place
-    sample_img = list(captions_dict.keys())[0]
+    sample_img = next(iter(captions_dict.keys()))
     sample_path = os.path.join(images_dir, sample_img)
     
     if not os.path.exists(sample_path):
         # Try to find images in subdirectory
-        alt_dirs = ['Flicker8k_Dataset', 'Flickr8k_Dataset', 'Images']
+        alt_dirs = ['Flicker8k_Dataset', 'Flickr8k_Dataset', 'Images', 'images', 'Image']
         for alt_dir in alt_dirs:
             alt_path = os.path.join(data_dir, alt_dir, sample_img)
             if os.path.exists(alt_path):
@@ -152,7 +215,7 @@ def create_minimal_dataset(data_dir='./data', num_samples=50):
     print(f"Creating minimal test dataset with {num_samples} samples...")
     
     os.makedirs(data_dir, exist_ok=True)
-    images_dir = os.path.join(data_dir, 'images')
+    images_dir = os.path.join(data_dir, 'Images')
     os.makedirs(images_dir, exist_ok=True)
     
     # Sample captions

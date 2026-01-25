@@ -3,8 +3,10 @@ Dataset utilities for cross-modal verification
 Handles loading Flickr8k/COCO datasets and generating hard negatives
 """
 import os
+import csv
 import json
 import random
+from functools import lru_cache
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -35,6 +37,7 @@ class Flickr8kDataset(Dataset):
         self.hard_negative_ratio = hard_negative_ratio
         self.max_length = max_length
         self.mode = mode
+        self._token_cache = {}
         
         # Load captions
         self.data = self.load_captions(captions_file)
@@ -47,6 +50,13 @@ class Flickr8kDataset(Dataset):
             
         # Generate training examples (positive + negative)
         self.examples = self.generate_examples()
+
+        # Pre-tokenize captions to avoid repeated Python string splitting in __getitem__
+        # (helps a bit; biggest wins are usually DataLoader workers + avoiding GPU sync)
+        for ex in self.examples:
+            cap = ex.get('caption')
+            if cap is not None and cap not in self._token_cache:
+                self._token_cache[cap] = self.tokenize(cap)
         
     def default_transform(self):
         """Default image transformation"""
@@ -71,16 +81,75 @@ class Flickr8kDataset(Dataset):
                 for img_id, captions in raw_data.items():
                     data[img_id] = captions if isinstance(captions, list) else [captions]
         else:
-            # Text format: image_id\tcaption
-            with open(captions_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    parts = line.strip().split('\t')
-                    if len(parts) >= 2:
-                        img_id = parts[0]
-                        caption = parts[1]
-                        if img_id not in data:
-                            data[img_id] = []
-                        data[img_id].append(caption)
+            # Text formats supported:
+            # - Flickr8k.token.txt: image.jpg#0\tcaption
+            # - Kaggle captions.txt: CSV with header "image,caption"
+            with open(captions_file, 'r', encoding='utf-8', newline='') as f:
+                first_line = f.readline()
+                if not first_line:
+                    return data
+                f.seek(0)
+
+                is_token_format = ('\t' in first_line)
+                is_csv_format = (',' in first_line and not is_token_format)
+
+                if is_token_format:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        parts = line.split('\t', 1)
+                        if len(parts) < 2:
+                            continue
+
+                        img_caption_id, caption = parts[0].strip(), parts[1].strip()
+                        img_id = img_caption_id.split('#')[0] if '#' in img_caption_id else img_caption_id
+                        if not img_id or not caption:
+                            continue
+                        data.setdefault(img_id, []).append(caption)
+
+                elif is_csv_format:
+                    reader = csv.reader(f)
+                    for row in reader:
+                        if not row:
+                            continue
+                        if row[0].strip().lower() == 'image':
+                            continue
+                        if len(row) < 2:
+                            continue
+                        img_id = row[0].strip()
+                        caption = ','.join(row[1:]).strip()
+                        if not img_id or not caption:
+                            continue
+                        data.setdefault(img_id, []).append(caption)
+
+                else:
+                    # Fallback: try tab split first, then comma split
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        if '\t' in line:
+                            parts = line.split('\t', 1)
+                            if len(parts) < 2:
+                                continue
+                            img_caption_id, caption = parts[0].strip(), parts[1].strip()
+                            img_id = img_caption_id.split('#')[0] if '#' in img_caption_id else img_caption_id
+                        elif ',' in line:
+                            parts = line.split(',', 1)
+                            if len(parts) < 2:
+                                continue
+                            img_id, caption = parts[0].strip(), parts[1].strip()
+                            if img_id.lower() == 'image':
+                                continue
+                        else:
+                            continue
+
+                        if not img_id or not caption:
+                            continue
+                        data.setdefault(img_id, []).append(caption)
         
         return data
     
@@ -224,7 +293,11 @@ class Flickr8kDataset(Dataset):
             image = torch.zeros(3, 224, 224)
         
         # Tokenize caption
-        text_tokens = self.tokenize(example['caption'])
+        caption = example['caption']
+        text_tokens = self._token_cache.get(caption)
+        if text_tokens is None:
+            text_tokens = self.tokenize(caption)
+            self._token_cache[caption] = text_tokens
         
         # Label
         label = torch.tensor(example['label'], dtype=torch.float)
@@ -242,6 +315,14 @@ def create_dataloaders(image_dir, captions_file, batch_size=32,
         captions_file=captions_file,
         mode='train'
     )
+
+    if len(full_dataset) == 0:
+        raise ValueError(
+            "No training examples were generated. "
+            "This usually means captions could not be loaded (wrong format/path) "
+            "or captions are empty. Ensure you have data/captions.json (or a valid captions.txt) "
+            "and that it contains entries." 
+        )
     
     # Split into train/val
     dataset_size = len(full_dataset)
@@ -257,12 +338,16 @@ def create_dataloaders(image_dir, captions_file, batch_size=32,
     val_dataset = torch.utils.data.Subset(full_dataset, val_indices)
     
     # Create dataloaders
+    pin_memory = torch.cuda.is_available()
+    persistent_workers = num_workers is not None and num_workers > 0
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=2 if persistent_workers else None
     )
     
     val_loader = DataLoader(
@@ -270,7 +355,9 @@ def create_dataloaders(image_dir, captions_file, batch_size=32,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=2 if persistent_workers else None
     )
     
     return train_loader, val_loader, full_dataset.vocab

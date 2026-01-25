@@ -31,7 +31,7 @@ EOF
 # =============================================
 
 !ls -la data/
-!ls -la data/images/ | head -10
+!ls -la data/Images/ | head -10
 
 # =============================================
 # 4. Konfiguracja (opcjonalnie edytuj config.py)
@@ -97,7 +97,7 @@ model.eval()
 
 # Załaduj przykładowy obraz
 transform = get_transform()
-img_path = 'data/images/image0000.jpg'  # zmień na rzeczywisty obraz
+img_path = 'data/Images/image0000.jpg'  # zmień na rzeczywisty obraz
 image = Image.open(img_path)
 image_tensor = transform(image)
 

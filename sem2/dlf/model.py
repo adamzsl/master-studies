@@ -8,19 +8,29 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 from typing import Optional
 
+from config import CNN_BACKBONE, PRETRAINED
+
 
 class ImageEncoder(nn.Module):
     """CNN-based image encoder using pretrained ResNet"""
     
-    def __init__(self, embedding_dim=512, pretrained=True):
+    def __init__(self, embedding_dim=512, pretrained=True, backbone: str = 'resnet50'):
         super(ImageEncoder, self).__init__()
-        # Load pretrained ResNet50
-        resnet = models.resnet50(pretrained=pretrained)
+
+        backbone = (backbone or 'resnet50').lower()
+        if backbone == 'resnet18':
+            resnet = models.resnet18(pretrained=pretrained)
+        elif backbone == 'resnet34':
+            resnet = models.resnet34(pretrained=pretrained)
+        else:
+            resnet = models.resnet50(pretrained=pretrained)
+
         # Remove the final classification layer
         self.features = nn.Sequential(*list(resnet.children())[:-1])
         # Add projection layer
+        in_features = resnet.fc.in_features
         self.projection = nn.Sequential(
-            nn.Linear(2048, embedding_dim),
+            nn.Linear(in_features, embedding_dim),
             nn.ReLU(),
             nn.Dropout(0.3)
         )
@@ -126,12 +136,14 @@ class SubmissionModel(nn.Module):
     """
     
     def __init__(self, vocab_size=10000, image_embedding_dim=512, 
-                 text_embedding_dim=256, hidden_dim=256):
+                 text_embedding_dim=256, hidden_dim=256,
+                 cnn_backbone: str = CNN_BACKBONE, pretrained: bool = PRETRAINED):
         super(SubmissionModel, self).__init__()
         
         self.image_encoder = ImageEncoder(
             embedding_dim=image_embedding_dim,
-            pretrained=True
+            pretrained=pretrained,
+            backbone=cnn_backbone
         )
         
         self.text_encoder = TextEncoder(
