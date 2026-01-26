@@ -13,12 +13,14 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 from collections import Counter
 
+from config import NEGATIVE_RATIO, HARD_NEGATIVE_RATIO
+
 
 class Flickr8kDataset(Dataset):
     """Dataset class for Flickr8k with hard negative generation"""
     
     def __init__(self, image_dir, captions_file, transform=None, 
-                 negative_ratio=0.5, hard_negative_ratio=0.7, 
+                 negative_ratio=NEGATIVE_RATIO, hard_negative_ratio=HARD_NEGATIVE_RATIO, 
                  vocab=None, max_length=50, mode='train'):
         """
         Args:
@@ -313,6 +315,8 @@ def create_dataloaders(image_dir, captions_file, batch_size=32,
     full_dataset = Flickr8kDataset(
         image_dir=image_dir,
         captions_file=captions_file,
+        negative_ratio=NEGATIVE_RATIO,
+        hard_negative_ratio=HARD_NEGATIVE_RATIO,
         mode='train'
     )
 
