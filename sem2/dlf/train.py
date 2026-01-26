@@ -29,7 +29,7 @@ class Trainer:
         self.device = device
         
         # Loss and optimizer
-        self.criterion = nn.BCELoss()
+        self.criterion = nn.BCEWithLogitsLoss()
         self.optimizer = optim.Adam(
             model.parameters(), 
             lr=learning_rate,
@@ -55,6 +55,7 @@ class Trainer:
         # AMP (mixed precision) speeds up CUDA training significantly
         self.use_amp = (str(self.device).startswith('cuda') or getattr(self.device, 'type', '') == 'cuda')
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.amp_device_type = 'cuda' if self.use_amp else 'cpu'
 
     @staticmethod
     def _binary_metrics(preds: torch.Tensor, labels: torch.Tensor):
@@ -91,9 +92,9 @@ class Trainer:
             
             # Forward pass
             self.optimizer.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(enabled=self.use_amp):
-                outputs = self.model(images, texts)
-                loss = self.criterion(outputs, labels)
+            with torch.amp.autocast(device_type=self.amp_device_type, enabled=self.use_amp):
+                logits = self.model(images, texts)
+                loss = self.criterion(logits, labels)
 
             # Backward pass
             self.scaler.scale(loss).backward()
@@ -101,7 +102,8 @@ class Trainer:
             self.scaler.update()
             
             # Metrics
-            preds = (outputs > 0.5).float()
+            probs = torch.sigmoid(logits)
+            preds = (probs > 0.5)
             preds_b = preds.bool()
             labels_b = labels.bool()
             tp += (preds_b & labels_b).sum()
@@ -136,12 +138,13 @@ class Trainer:
                 labels = labels.to(self.device)
                 
                 # Forward pass
-                with torch.cuda.amp.autocast(enabled=self.use_amp):
-                    outputs = self.model(images, texts)
-                    loss = self.criterion(outputs, labels)
+                with torch.amp.autocast(device_type=self.amp_device_type, enabled=self.use_amp):
+                    logits = self.model(images, texts)
+                    loss = self.criterion(logits, labels)
                 
                 # Metrics
-                preds = (outputs > 0.5).float()
+                probs = torch.sigmoid(logits)
+                preds = (probs > 0.5)
                 preds_b = preds.bool()
                 labels_b = labels.bool()
                 tp += (preds_b & labels_b).sum()

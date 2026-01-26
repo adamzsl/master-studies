@@ -57,7 +57,8 @@ class TestModelComponents(unittest.TestCase):
         output = fusion(img_emb, txt_emb)
         
         self.assertEqual(output.shape, (self.batch_size,))
-        self.assertTrue((output >= 0).all() and (output <= 1).all())
+        probs = torch.sigmoid(output)
+        self.assertTrue((probs >= 0).all() and (probs <= 1).all())
         
     def test_full_model(self):
         """Test full SubmissionModel"""
@@ -73,7 +74,8 @@ class TestModelComponents(unittest.TestCase):
         output = model(images, texts)
         
         self.assertEqual(output.shape, (self.batch_size,))
-        self.assertTrue((output >= 0).all() and (output <= 1).all())
+        probs = torch.sigmoid(output)
+        self.assertTrue((probs >= 0).all() and (probs <= 1).all())
         self.assertFalse(torch.isnan(output).any())
         
     def test_predict_method(self):

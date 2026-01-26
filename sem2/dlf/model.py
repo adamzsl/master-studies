@@ -86,16 +86,16 @@ class FusionModule(nn.Module):
     
     def __init__(self, embedding_dim=256, hidden_dim=256, dropout=0.3):
         super(FusionModule, self).__init__()
-        # Concatenation-based fusion
+        # We fuse three parts: [image_emb, text_emb, image_emb * text_emb]
+        fusion_input_dim = embedding_dim * 3
         self.fusion = nn.Sequential(
-            nn.Linear(embedding_dim * 2, hidden_dim),
+            nn.Linear(fusion_input_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
+            nn.Linear(hidden_dim // 2, 1)
         )
         
     def forward(self, image_emb, text_emb):
@@ -110,23 +110,9 @@ class FusionModule(nn.Module):
         
         # Combine both
         combined = torch.cat([concat_features, mult_features], dim=1)
-        
-        # Adjust fusion layer input
-        if not hasattr(self, 'fusion_adjusted'):
-            self.fusion = nn.Sequential(
-                nn.Linear(combined.size(1), 256),
-                nn.ReLU(),
-                nn.Dropout(0.3),
-                nn.Linear(256, 128),
-                nn.ReLU(),
-                nn.Dropout(0.3),
-                nn.Linear(128, 1),
-                nn.Sigmoid()
-            ).to(combined.device)
-            self.fusion_adjusted = True
             
-        output = self.fusion(combined)  # [batch_size, 1]
-        return output.squeeze(1)  # [batch_size]
+        logits = self.fusion(combined)  # [batch_size, 1]
+        return logits.squeeze(1)  # [batch_size]
 
 
 class SubmissionModel(nn.Module):
@@ -219,10 +205,10 @@ class SubmissionModel(nn.Module):
             text_tokens = text_tokens.to(device)
             
             # Forward pass
-            output = self.forward(image, text_tokens)
+            logits = self.forward(image, text_tokens)
             
             # Return as float
-            return output.item()
+            return torch.sigmoid(logits).item()
     
     def set_vocab(self, vocab):
         """Set vocabulary for tokenization"""
