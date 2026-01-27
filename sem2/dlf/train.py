@@ -268,7 +268,7 @@ def prepare_submission_model(checkpoint_path, output_path='weights.pth'):
     vocab = checkpoint['vocab']
     
     # Create model
-    model = SubmissionModel(vocab_size=len(vocab))
+    model = SubmissionModel(vocab_size=VOCAB_SIZE)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.set_vocab(vocab)
     
@@ -360,9 +360,9 @@ def main():
     )
     
     # Create model
-    print(f"\nCreating model with vocabulary size: {len(vocab)}")
+    print(f"\nCreating model with vocabulary size (embedding): {VOCAB_SIZE} | vocab dict size: {len(vocab)}")
     model = SubmissionModel(
-        vocab_size=len(vocab),
+        vocab_size=VOCAB_SIZE,
         image_embedding_dim=IMAGE_EMBEDDING_DIM,
         text_embedding_dim=TEXT_EMBEDDING_DIM,
         hidden_dim=HIDDEN_DIM

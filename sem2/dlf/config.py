@@ -19,6 +19,9 @@ LSTM_LAYERS = 2
 BIDIRECTIONAL = True
 MAX_TEXT_LENGTH = 50
 
+# Text vocabulary (submission evaluator expects fixed embedding size)
+VOCAB_SIZE = 10000
+
 # Training Configuration
 BATCH_SIZE = 32
 LEARNING_RATE = 0.0001
