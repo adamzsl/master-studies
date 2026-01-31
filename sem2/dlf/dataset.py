@@ -155,12 +155,8 @@ class Flickr8kDataset(Dataset):
         
         return data
     
-    def build_vocab(self, min_freq=2, max_vocab_size: int = 10000):
-        """Build vocabulary from captions.
-
-        Ensures token ids stay < max_vocab_size so they match a fixed-size
-        nn.Embedding(max_vocab_size, ...).
-        """
+    def build_vocab(self, min_freq=2):
+        """Build vocabulary from captions (dynamic size)."""
         word_counts = Counter()
         
         for captions in self.data.values():
@@ -170,17 +166,14 @@ class Flickr8kDataset(Dataset):
         
         # Create vocab: {word: id}
         vocab = {'<PAD>': 0, '<UNK>': 1}
-
-        # Keep most frequent words to fit in the fixed embedding
-        max_words = max(0, int(max_vocab_size) - 2)
+        next_idx = 2
         for word, count in word_counts.most_common():
             if count < min_freq:
                 continue
-            if len(vocab) >= (max_words + 2):
-                break
-            vocab[word] = len(vocab)
-                
-        print(f"Built vocabulary with {len(vocab)} words (max {max_vocab_size})")
+            vocab[word] = next_idx
+            next_idx += 1
+
+        print(f"Built vocabulary with {len(vocab)} words")
         return vocab
     
     def tokenize(self, text):

@@ -1,22 +1,26 @@
 """
 SubmissionModel for cross-modal verification system
-Using CNN (ResNet) for image encoding and LSTM for text encoding
 """
 import torch
 import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
-from typing import Optional
+import json
+import os
 
-from config import CNN_BACKBONE, PRETRAINED
-
+# Define defaults here to make model.py self-contained for submission
+DEFAULT_VOCAB_SIZE = 10000
+DEFAULT_EMBED_DIM = 256
+DEFAULT_IMAGE_EMBED_DIM = 512
+DEFAULT_HIDDEN_DIM = 256
 
 class ImageEncoder(nn.Module):
     """CNN-based image encoder using pretrained ResNet"""
     
-    def __init__(self, embedding_dim=512, pretrained=True, backbone: str = 'resnet50'):
+    def __init__(self, embedding_dim=DEFAULT_IMAGE_EMBED_DIM, pretrained=True, backbone='resnet50'):
         super(ImageEncoder, self).__init__()
 
+        # Handle potential backbone strings
         backbone = (backbone or 'resnet50').lower()
         if backbone == 'resnet18':
             resnet = models.resnet18(pretrained=pretrained)
@@ -27,8 +31,11 @@ class ImageEncoder(nn.Module):
 
         # Remove the final classification layer
         self.features = nn.Sequential(*list(resnet.children())[:-1])
+        
         # Add projection layer
+        # ResNet18/34 have 512 output features, ResNet50/101 have 2048
         in_features = resnet.fc.in_features
+        
         self.projection = nn.Sequential(
             nn.Linear(in_features, embedding_dim),
             nn.ReLU(),
@@ -36,18 +43,17 @@ class ImageEncoder(nn.Module):
         )
         
     def forward(self, x):
-        # x: [batch_size, 3, 224, 224]
-        features = self.features(x)  # [batch_size, 2048, 1, 1]
-        features = features.view(features.size(0), -1)  # [batch_size, 2048]
-        embeddings = self.projection(features)  # [batch_size, embedding_dim]
+        features = self.features(x)  # [batch_size, C, 1, 1]
+        features = features.view(features.size(0), -1)  # Flatten
+        embeddings = self.projection(features)
         return embeddings
 
 
 class TextEncoder(nn.Module):
     """LSTM-based text encoder"""
     
-    def __init__(self, vocab_size=10000, embedding_dim=256, hidden_dim=256, 
-                 num_layers=2, bidirectional=True, dropout=0.3):
+    def __init__(self, vocab_size=DEFAULT_VOCAB_SIZE, embedding_dim=DEFAULT_EMBED_DIM, 
+                 hidden_dim=DEFAULT_HIDDEN_DIM, num_layers=2, bidirectional=True, dropout=0.3):
         super(TextEncoder, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
         self.lstm = nn.LSTM(
@@ -68,25 +74,26 @@ class TextEncoder(nn.Module):
         
     def forward(self, x):
         # x: [batch_size, seq_len]
-        embedded = self.embedding(x)  # [batch_size, seq_len, embedding_dim]
+        embedded = self.embedding(x)
         lstm_out, (hidden, cell) = self.lstm(embedded)
         
-        # Use the last hidden state (concatenate both directions if bidirectional)
+        # Use the last hidden state
         if self.lstm.bidirectional:
-            hidden = torch.cat((hidden[-2], hidden[-1]), dim=1)  # [batch_size, hidden_dim*2]
+            # Concatenate forward and backward final states
+            hidden = torch.cat((hidden[-2], hidden[-1]), dim=1)
         else:
-            hidden = hidden[-1]  # [batch_size, hidden_dim]
+            hidden = hidden[-1]
             
-        embeddings = self.projection(hidden)  # [batch_size, embedding_dim]
+        embeddings = self.projection(hidden)
         return embeddings
 
 
 class FusionModule(nn.Module):
     """Fusion module to combine image and text embeddings"""
     
-    def __init__(self, embedding_dim=256, hidden_dim=256, dropout=0.3):
+    def __init__(self, embedding_dim=DEFAULT_EMBED_DIM, hidden_dim=DEFAULT_HIDDEN_DIM, dropout=0.3):
         super(FusionModule, self).__init__()
-        # We fuse three parts: [image_emb, text_emb, image_emb * text_emb]
+        # We fuse: [image, text, image*text] -> 3x embedding_dim
         fusion_input_dim = embedding_dim * 3
         self.fusion = nn.Sequential(
             nn.Linear(fusion_input_dim, hidden_dim),
@@ -99,33 +106,38 @@ class FusionModule(nn.Module):
         )
         
     def forward(self, image_emb, text_emb):
-        # image_emb: [batch_size, embedding_dim]
-        # text_emb: [batch_size, embedding_dim]
-        
-        # Element-wise multiplication (Hadamard product)
+        # Element-wise multiplication (interactions)
         mult_features = image_emb * text_emb
         
         # Concatenation
         concat_features = torch.cat([image_emb, text_emb], dim=1)
         
-        # Combine both
+        # Combine all
         combined = torch.cat([concat_features, mult_features], dim=1)
             
-        logits = self.fusion(combined)  # [batch_size, 1]
-        return logits.squeeze(1)  # [batch_size]
+        logits = self.fusion(combined)
+        return logits.squeeze(1)
 
 
 class SubmissionModel(nn.Module):
     """
     Main model for cross-modal verification
-    Follows submission system requirements
     """
     
-    def __init__(self, vocab_size=10000, image_embedding_dim=512, 
-                 text_embedding_dim=256, hidden_dim=256,
-                 cnn_backbone: str = CNN_BACKBONE, pretrained: bool = PRETRAINED):
+    def __init__(self, vocab_size=DEFAULT_VOCAB_SIZE, 
+                 image_embedding_dim=DEFAULT_IMAGE_EMBED_DIM, 
+                 text_embedding_dim=DEFAULT_EMBED_DIM, 
+                 hidden_dim=DEFAULT_HIDDEN_DIM,
+                 cnn_backbone='resnet50', pretrained=True):
         super(SubmissionModel, self).__init__()
         
+        # 1. Load Vocab immediately (Critical for submission server)
+        self.vocab = {}
+        self.max_length = 50
+        loaded_vocab_size = self.load_vocab_from_file()
+        actual_vocab_size = loaded_vocab_size or vocab_size
+        self.vocab_size = actual_vocab_size
+
         self.image_encoder = ImageEncoder(
             embedding_dim=image_embedding_dim,
             pretrained=pretrained,
@@ -133,7 +145,7 @@ class SubmissionModel(nn.Module):
         )
         
         self.text_encoder = TextEncoder(
-            vocab_size=vocab_size,
+            vocab_size=actual_vocab_size,
             embedding_dim=text_embedding_dim,
             hidden_dim=hidden_dim,
             num_layers=2,
@@ -141,7 +153,7 @@ class SubmissionModel(nn.Module):
             dropout=0.3
         )
         
-        # Project to same dimension for fusion
+        # Project image features to match text embedding size for fusion
         self.image_projection = nn.Linear(image_embedding_dim, text_embedding_dim)
         
         self.fusion = FusionModule(
@@ -150,29 +162,44 @@ class SubmissionModel(nn.Module):
             dropout=0.3
         )
         
-        # Simple tokenizer for inference
-        self.vocab = {}
-        self.max_length = 50
-        
+    def load_vocab_from_file(self, filename='vocab.json'):
+        """Attempt to load vocabulary from json file. Returns vocab size if loaded."""
+        if not os.path.exists(filename):
+            return None
+        try:
+            with open(filename, 'r') as f:
+                loaded = json.load(f)
+            if not isinstance(loaded, dict):
+                return None
+            # Ensure ints
+            self.vocab = {str(k): int(v) for k, v in loaded.items()}
+            if not self.vocab:
+                return None
+            max_idx = max(self.vocab.values())
+            return int(max_idx) + 1
+        except Exception as e:
+            print(f"Warning: Could not load vocab.json: {e}")
+            return None
+
     def forward(self, images, texts):
-        """Forward pass for training"""
-        # Encode image and text
+        # Encode image
         image_features = self.image_encoder(images)
+        image_features = self.image_projection(image_features) # Project to 256
+        
+        # Encode text
         text_features = self.text_encoder(texts)
         
-        # Project image features to same dimension
-        image_features = self.image_projection(image_features)
-        
-        # Fuse and predict
+        # Fuse
         output = self.fusion(image_features, text_features)
         return output
     
     def tokenize(self, text):
-        """Simple word-level tokenization"""
+        """Simple word-level tokenization using loaded vocab"""
         tokens = text.lower().split()
+        # Default to 1 (UNK) if word not found. 0 is PAD.
         token_ids = [self.vocab.get(token, 1) for token in tokens[:self.max_length]]
         
-        # Pad or truncate
+        # Pad to max_length
         if len(token_ids) < self.max_length:
             token_ids = token_ids + [0] * (self.max_length - len(token_ids))
         else:
@@ -182,43 +209,35 @@ class SubmissionModel(nn.Module):
     
     def predict(self, image_tensor, text_string):
         """
-        Prediction method required by submission system
-        
-        Args:
-            image_tensor: torch.Tensor of shape [3, 224, 224]
-            text_string: str, text description
-            
-        Returns:
-            float: probability between 0.0 and 1.0
+        Required method for submission.
         """
         self.eval()
         with torch.no_grad():
-            # Add batch dimension
-            image = image_tensor.unsqueeze(0)  # [1, 3, 224, 224]
+            # 1. Prepare Image [1, 3, 224, 224]
+            image = image_tensor.unsqueeze(0)
             
-            # Tokenize text
-            text_tokens = self.tokenize(text_string).unsqueeze(0)  # [1, max_length]
+            # 2. Prepare Text [1, 50]
+            text_tokens = self.tokenize(text_string).unsqueeze(0)
             
-            # Move to same device as model
+            # 3. Device handling
             device = next(self.parameters()).device
             image = image.to(device)
             text_tokens = text_tokens.to(device)
             
-            # Forward pass
+            # 4. Forward
             logits = self.forward(image, text_tokens)
             
-            # Return as float
+            # 5. Return probability float
             return torch.sigmoid(logits).item()
     
     def set_vocab(self, vocab):
-        """Set vocabulary for tokenization"""
+        """Helper to set vocab manually if needed"""
         self.vocab = vocab
 
 
 def get_transform():
     """
-    Optional transform function for submission system
-    Returns the image transformation pipeline
+    Required transform function
     """
     return transforms.Compose([
         transforms.Resize((224, 224)),
